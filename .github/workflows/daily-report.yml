@@ -1,0 +1,39 @@
+# 每日体检日报 — 每天 09:00 北京时间(01:00 UTC)把完整探针结果发到飞书,
+# 全绿也发。让「证书还剩多少天、每条链路耗时」天天可见,而不是只在故障时才出现。
+name: daily-report
+
+on:
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 跑探针
+        id: probes
+        continue-on-error: true
+        run: |
+          chmod +x probe.sh
+          ./probe.sh | tee report.txt
+
+      - name: 发送飞书日报
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+        run: |
+          if [ "${{ steps.probes.outcome }}" = "success" ]; then head='📊 bufancv 每日体检 — 全部正常'; else head='📊🔴 bufancv 每日体检 — 有异常!'; fi
+          text=$(printf '%s\n\n%s\n\n站外视角: GitHub Actions (海外) · 探针详情: https://github.com/%s' \
+            "$head" "$(cat report.txt)" "${{ github.repository }}")
+          jq -n --arg t "$text" '{msg_type:"text",content:{text:$t}}' \
+            | curl -sS -X POST -H 'Content-Type: application/json' -d @- "$FEISHU_WEBHOOK"

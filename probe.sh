@@ -23,10 +23,12 @@ FAILED=()
 # http_probe <名称> <期望状态码正则> <url> [响应体必含正则]
 http_probe() {
   local name=$1 expect=$2 url=$3 body_re=${4:-}
-  local attempt code body
+  local attempt code secs body out
   for attempt in $(seq 1 "$RETRIES"); do
     body=$(mktemp)
-    code=$(curl -sS -A "$UA" -o "$body" --max-time "$TIMEOUT" -w '%{http_code}' "$url" 2>/dev/null) || code=000
+    out=$(curl -sS -A "$UA" -o "$body" --max-time "$TIMEOUT" -w '%{http_code} %{time_total}' "$url" 2>/dev/null) || out='000 -'
+    code=${out%% *}
+    secs=$(printf '%.2f' "${out##* }" 2>/dev/null || echo '-')
     if [[ "$code" =~ ^($expect)$ ]]; then
       if [[ -n "$body_re" ]] && ! grep -q "$body_re" "$body"; then
         rm -f "$body"
@@ -35,7 +37,7 @@ http_probe() {
         return 1
       fi
       rm -f "$body"
-      PASSED+=("$name → HTTP $code")
+      PASSED+=("$name → HTTP $code, ${secs}s")
       return 0
     fi
     rm -f "$body"
@@ -57,11 +59,13 @@ cert_probe() {
   fi
   epoch_end=$(date -d "$end" +%s)
   days=$(( (epoch_end - $(date +%s)) / 86400 ))
+  local end_cn
+  end_cn=$(TZ=Asia/Shanghai date -d "$end" '+%F')
   if (( days < min_days )); then
-    FAILED+=("$name → 证书仅剩 $days 天 (<${min_days}d, $host)")
+    FAILED+=("$name → 证书仅剩 $days 天,${end_cn} 到期 (<${min_days}d, $host)")
     return 1
   fi
-  PASSED+=("$name → 剩 ${days} 天")
+  PASSED+=("$name → 剩 ${days} 天,${end_cn} 到期")
   return 0
 }
 
