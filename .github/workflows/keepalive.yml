@@ -1,0 +1,22 @@
+# GitHub 会在公开仓库 60 天无 commit 活动后自动停用 scheduled workflow。
+# 每月打一个空 commit 保活,确保探针永不静默失效。
+name: keepalive
+
+on:
+  schedule:
+    - cron: '23 3 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          git config user.name 'probe-keepalive'
+          git config user.email 'probe-keepalive@users.noreply.github.com'
+          git commit --allow-empty -m 'chore: keepalive(防公开仓 60 天无活动后 schedule 被自动停用)'
+          git push

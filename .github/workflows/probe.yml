@@ -1,0 +1,83 @@
+# bufancv 生产探针 — 每 5 分钟一跑(GitHub 调度有抖动,实际 5-15 分钟)。
+#
+# 告警策略:
+# - 第一轮失败 → 等 60s 再跑第二轮复核,两轮都失败才算真故障(防跨境网络抖动误报)。
+# - 上一次运行已经是 failure 时不重复告警(故障持续期间只在开头发一条)。
+# - 从 failure 恢复为 success 时发一条恢复通知。
+# - FEISHU_WEBHOOK 存 Actions secret,公开仓库不落明文;fork PR 拿不到 secrets。
+name: probe
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 第一轮探测
+        id: sweep1
+        continue-on-error: true
+        run: |
+          chmod +x probe.sh
+          ./probe.sh | tee sweep1.txt
+
+      - name: 第二轮复核(60s 后,防抖动误报)
+        id: sweep2
+        if: steps.sweep1.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          sleep 60
+          ./probe.sh | tee sweep2.txt
+
+      - name: 读取上一次运行结论(去重/恢复判定)
+        id: prev
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prev=$(gh api "repos/${{ github.repository }}/actions/workflows/probe.yml/runs?status=completed&branch=main&per_page=1" \
+            --jq '.workflow_runs[0].conclusion // "none"')
+          echo "conclusion=$prev" >> "$GITHUB_OUTPUT"
+          echo "上一次运行结论: $prev"
+
+      - name: 飞书告警(确认故障,且非重复)
+        if: >-
+          steps.sweep1.outcome == 'failure' &&
+          steps.sweep2.outcome == 'failure' &&
+          steps.prev.outputs.conclusion != 'failure'
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+        run: |
+          text=$(printf '🔴 bufancv 生产探针告警(两轮复核均失败)\n\n%s\n\n运行详情: %s/%s/actions/runs/%s' \
+            "$(cat sweep2.txt)" "${{ github.server_url }}" "${{ github.repository }}" "${{ github.run_id }}")
+          jq -n --arg t "$text" '{msg_type:"text",content:{text:$t}}' \
+            | curl -sS -X POST -H 'Content-Type: application/json' -d @- "$FEISHU_WEBHOOK"
+
+      - name: 飞书恢复通知
+        if: >-
+          steps.sweep1.outcome == 'success' &&
+          steps.prev.outputs.conclusion == 'failure'
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+        run: |
+          text=$(printf '🟢 bufancv 探针恢复\n\n%s' "$(cat sweep1.txt)")
+          jq -n --arg t "$text" '{msg_type:"text",content:{text:$t}}' \
+            | curl -sS -X POST -H 'Content-Type: application/json' -d @- "$FEISHU_WEBHOOK"
+
+      - name: 确认故障则标红本次运行
+        if: steps.sweep1.outcome == 'failure' && steps.sweep2.outcome == 'failure'
+        run: exit 1
