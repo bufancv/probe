@@ -76,9 +76,11 @@ http_probe 'web 首页'                 '200'     'https://bufancv.com/' '不繁
 http_probe 'api 存活 (/api/me 匿名)'   '401|200' 'https://bufancv.com/api/me'
 http_probe 'assets CDN 回源穿透'       '404'     "https://assets.bufancv.com/_nuxt/${UNIQ}.js"
 http_probe 'cdn(OSS)回源穿透'          '404|403' "https://cdn.bufancv.com/${UNIQ}"
+http_probe 'umami 后台存活'            '200'     'https://umami.bufancv.com/api/heartbeat'
 cert_probe 'cert bufancv.com'         'bufancv.com'        14
 cert_probe 'cert assets.bufancv.com'  'assets.bufancv.com' 14
 cert_probe 'cert cdn.bufancv.com'     'cdn.bufancv.com'    14
+cert_probe 'cert umami.bufancv.com'   'umami.bufancv.com'  14
 
 echo "==== bufancv probe $(TZ=Asia/Shanghai date '+%F %T CST') ===="
 if (( ${#PASSED[@]} )); then
